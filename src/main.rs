@@ -1,5 +1,4 @@
 extern crate reqwest;
-extern crate serialport;
 extern crate serde;
 extern crate serde_json;
 
@@ -228,40 +227,8 @@ fn get_arrivals(c: &Context, stop_id: i64, customer_id: i64)
     Ok(a)
 }
 
-fn init_serial() -> Box<dyn serialport::SerialPort> {
-    const PORT: &str = "/dev/ttyUSB0"; /* XXX */
-    let p = match serialport::open(PORT) {
-        Err(e) => {
-            eprintln!("ERROR: serial port {}: {}", PORT, e);
-            exit(1);
-        }
-        Ok(p) => p
-    };
-
-    let mut ok: bool = true;
-    if let Some(n) = p.name() {
-        println!("name: {}", n);
-    } else {
-        ok = false;
-    }
-    if let Ok(br) = p.baud_rate() {
-        println!("baud rate: {}", br);
-    } else {
-        ok = false;
-    }
-
-    if !ok {
-        eprintln!("ERROR: could not get name or baud rate");
-        exit(2);
-    }
-
-    p
-}
-
 fn main() {
     println!("Hello, world!");
-
-    //let p = init_serial();
 
     let cb = reqwest::ClientBuilder::new()
         .redirect(reqwest::RedirectPolicy::none());
