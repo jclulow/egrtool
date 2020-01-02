@@ -286,19 +286,24 @@ fn main() {
     println!("STOP IDS: {:#?}", stop_ids);
     println!("ROUTE NAMES: {:#?}", c.route_names);
 
-    for stop_id in stop_ids {
-        let arrivals = get_arrivals(&c, stop_id, 86 /* Customer ID XXX */)
-            .expect("get arrivals");
+    loop {
+        println!("");
+        for stop_id in &stop_ids {
+            let arrivals = get_arrivals(&c, *stop_id, 86 /* Customer ID XXX */)
+                .expect("get arrivals");
 
-        println!("STOP ID {} ARRIVALS:", stop_id);
+            println!("STOP ID {} ARRIVALS:", *stop_id);
 
-        for a in arrivals {
-            let sched = if a.just_scheduled { "SCHEDULED" } else { "ACTUAL" };
-            let busname = if let Some(n) = a.bus_name { format!("#{}", n) }
-                else { "-".to_string() };
+            for a in arrivals {
+                let sched = if a.just_scheduled { "SCHEDULED" } else { "ACTUAL" };
+                let busname = if let Some(n) = a.bus_name { format!("#{}", n) }
+                    else { "-".to_string() };
 
-            println!("{:16} {:8} {:10} {:8}", a.route_name, a.arrive_time,
-                sched, busname);
+                println!("{:16} {:8} {:10} {:8}", a.route_name, a.arrive_time,
+                    sched, busname);
+            }
         }
+
+        std::thread::sleep_ms(30_000);
     }
 }
