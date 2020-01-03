@@ -1,0 +1,5 @@
+BUS!="usb", ACTION!="add", SUBSYSTEM!=="usb_device", GOTO="pole-display-end"
+
+ATTR{idVendor}=="0fa8", ATTR{idProduct}=="a030", MODE="660", GROUP="plugdev"
+
+LABEL="pole-display-end"
