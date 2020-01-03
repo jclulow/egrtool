@@ -1,7 +1,3 @@
-extern crate reqwest;
-extern crate serde;
-extern crate serde_json;
-
 use std::process::exit;
 use std::io::Result;
 use std::io::Error;
@@ -15,7 +11,7 @@ use chrono::prelude::*;
 use serde::Deserialize;
 
 struct RecentArrivals {
-    list: Vec<Arrival>,
+    list: Vec<(DateTime<Local>, Arrival)>,
 }
 
 struct Context {
@@ -42,8 +38,13 @@ struct Arrival {
     just_scheduled: bool,
 }
 
-#[derive(Debug, Deserialize)]
 struct Arrivals {
+    read_time: DateTime<Local>,
+    list: Vec<Arrival>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseArrivals {
     #[serde(rename = "RouteID")]
     route_id: i64,
     #[serde(rename = "Arrivals")]
@@ -191,7 +192,7 @@ fn get_directions(c: &Context, route_id: i64) -> Result<Vec<Direction>> {
 }
 
 fn get_arrivals(c: &Context, stop_id: i64, customer_id: i64)
-    -> Result<Vec<Arrival>>
+    -> Result<Arrivals>
 {
     let u = url(&format!("Stop/{}/Arrivals?customerID={}", stop_id,
         customer_id));
@@ -200,7 +201,7 @@ fn get_arrivals(c: &Context, stop_id: i64, customer_id: i64)
 
     let req = c.client.get(&u);
 
-    fn ee(s: String) -> Result<Vec<Arrival>> {
+    fn ee(s: String) -> Result<Arrivals> {
         Err(Error::new(ErrorKind::Other, s))
     }
 
@@ -211,11 +212,13 @@ fn get_arrivals(c: &Context, stop_id: i64, customer_id: i64)
         Ok(r) => r
     };
 
+    let read_time: DateTime<Local> = Local::now();
+
     if res.status() != reqwest::StatusCode::OK {
         return ee(format!("odd response ({}): {:?}", res.status(), res));
     }
 
-    let arrivals: Vec<Arrivals> = match res.json() {
+    let arrivals: Vec<ResponseArrivals> = match res.json() {
         Ok(r) => r,
         Err(e) => {
             return ee(format!("JSON parse: {}", e));
@@ -233,7 +236,10 @@ fn get_arrivals(c: &Context, stop_id: i64, customer_id: i64)
         a.eta_seconds.partial_cmp(&b.eta_seconds).unwrap()
     });
 
-    Ok(a)
+    Ok(Arrivals {
+        read_time: read_time,
+        list: a,
+    })
 }
 
 fn sleep(ms: u64) {
@@ -264,7 +270,13 @@ fn display_thread(ra: Arc<Mutex<RecentArrivals>>) {
         // let f = local.format("%H:%M:%S");
 
         /*
-         * Build list of departures:
+         * Build two display lines: a list of departure times on the first line,
+         * and the remaining time until departure (e.g., +2 minutes) on the
+         * second line.  It should look roughly like this on the display:
+         *     /--------------------\
+         *     | 11:12  11:39  11:59|
+         *     |. +11m   +38m   +58m|
+         *     \--------------------/
          */
         let mut s = String::new();
         let mut q = String::new();
@@ -280,18 +292,34 @@ fn display_thread(ra: Arc<Mutex<RecentArrivals>>) {
                     q.push_str("  ");
                 }
 
-                let mut mins = (t.eta_seconds / 60.0).floor() as i64;
-                if mins < 0 {
-                    mins = 0;
-                }
-                //s.push_str(&format!("{}", mins.floor()));
+                /*
+                 * The arrival event is projected to occur "eta_seconds" after
+                 * the request was made:
+                 */
+                let delta = chrono::Duration::seconds(t.1.eta_seconds as i64);
 
-                let dur = chrono::Duration::seconds(t.eta_seconds as i64);
-                let when = local.checked_add_signed(dur).unwrap()
-                    .format("%H:%M");
+                /*
+                 * The absolute projected event time:
+                 */
+                let when = t.0.checked_add_signed(delta).unwrap();
 
-                s.push_str(&format!("{}", when));
-                q.push_str(&format!("{:>5}", format!("+{}m", mins)));
+                /*
+                 * Calculate the time remaining between now and the projected
+                 * event time:
+                 */
+                let rem = when.signed_duration_since(local);
+
+                s.push_str(&format!("{}", when.format("%H:%M")));
+
+                let remsec = rem.num_seconds();
+                let remstr = if remsec < 0 {
+                    "now?".to_string()
+                } else if remsec < 60 {
+                    format!("+{}s", remsec)
+                } else {
+                    format!("+{}m", rem.num_minutes())
+                };
+                q.push_str(&format!("{:>5}", remstr));
 
                 if s.len() > 15 {
                     break;
@@ -304,6 +332,10 @@ fn display_thread(ra: Arc<Mutex<RecentArrivals>>) {
         pole.move_to(0, 1);
         pole.writes(&format!("{:>20}", q));
 
+        /*
+         * Flash a period in the bottom left corner to show that the display is
+         * still being refreshed.
+         */
         pole.move_to(0, 1);
         if on {
             pole.writec('.');
@@ -392,7 +424,7 @@ fn main() {
     loop {
         println!("");
 
-        let mut real_arrivals: Vec<Arrival> = Vec::new();
+        let mut real_arrivals: Vec<(DateTime<Local>, Arrival)> = Vec::new();
         let mut fail = false;
 
         for stop_id in &stop_ids {
@@ -409,7 +441,7 @@ fn main() {
 
             println!("STOP ID {} ARRIVALS:", *stop_id);
 
-            for a in arrivals {
+            for a in arrivals.list {
                 let sched = if a.just_scheduled { "SCHEDULED" } else { "ACTUAL" };
                 let busname = if let Some(n) = &a.bus_name { format!("#{}", n) }
                     else { "-".to_string() };
@@ -418,7 +450,7 @@ fn main() {
                     sched, busname);
 
                 if !a.just_scheduled {
-                    real_arrivals.push(a);
+                    real_arrivals.push((arrivals.read_time, a));
                 }
             }
         }
