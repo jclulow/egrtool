@@ -240,6 +240,13 @@ fn sleep(ms: u64) {
     std::thread::sleep(std::time::Duration::from_millis(ms));
 }
 
+fn reset_display() {
+    let pole = pd3000::PD3000::open();
+
+    pole.reset();
+    pole.cursor_hide();
+}
+
 fn display_thread(ra: Arc<Mutex<RecentArrivals>>) {
     let pole = pd3000::PD3000::open();
 
@@ -315,6 +322,12 @@ fn spawn_display_thread(c: &Context) {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 && args[1] == "reset" {
+        reset_display();
+        exit(0);
+    }
+
     let cb = reqwest::ClientBuilder::new()
         .redirect(reqwest::RedirectPolicy::none());
 
