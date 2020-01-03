@@ -256,13 +256,16 @@ fn main() {
     println!("routes: {:#?}", routes);
 
     let route_ids: Vec<i64> = routes.iter().filter(|route| {
-        route.name == "Hollis" || route.name == "South Hollis"
+        route.name == "Hollis" ||
+        route.name == "South Hollis" ||
+        route.name == "Shellmound/Powell"
     }).map(|route| {
         route.id
     }).collect();
     println!("matching routes: {:#?}", route_ids);
 
     let mut stop_ids: Vec<i64> = Vec::new();
+    let mut stop_names: HashMap<i64, String> = HashMap::new();
 
     for rid in route_ids {
         //println!("ROUTE {} DIRECTIONS:", rid);
@@ -273,10 +276,13 @@ fn main() {
 
             for stop in dir.stops {
                 if stop.rtpi_number == 5323 ||
-                    stop.name == "Park Ave @ Pixar (EB)"
+                    stop.name == "Park Ave @ Pixar (EB)" ||
+                    stop.rtpi_number == 5305 ||
+                    stop.name == "40th St @ Emery St (EB)"
                 {
                     if !stop_ids.contains(&stop.id) {
                         stop_ids.push(stop.id);
+                        stop_names.insert(stop.id, stop.name);
                     }
                 }
             }
@@ -289,17 +295,28 @@ fn main() {
     loop {
         println!("");
         for stop_id in &stop_ids {
-            let arrivals = get_arrivals(&c, *stop_id, 86 /* Customer ID XXX */)
-                .expect("get arrivals");
+            let arrivals = match get_arrivals(&c, *stop_id, 86 /* Customer ID XXX */) {
+                Err(e) => {
+                    eprintln!("WARNING: get arrivals: {}", e);
+                    std::thread::sleep_ms(3_000);
+                    continue;
+                }
+                Ok(a) => a
+            };
 
-            println!("STOP ID {} ARRIVALS:", *stop_id);
+            println!("STOP ID {} ({}) ARRIVALS:", *stop_id,
+                stop_names.get(stop_id).unwrap());
 
             for a in arrivals {
+                if a.just_scheduled {
+                    continue;
+                }
+
                 let sched = if a.just_scheduled { "SCHEDULED" } else { "ACTUAL" };
                 let busname = if let Some(n) = a.bus_name { format!("#{}", n) }
                     else { "-".to_string() };
 
-                println!("{:16} {:8} {:10} {:8}", a.route_name, a.arrive_time,
+                println!("{:20} {:8} {:10} {:8}", a.route_name, a.arrive_time,
                     sched, busname);
             }
         }
