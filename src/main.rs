@@ -267,16 +267,19 @@ fn display_thread(ra: Arc<Mutex<RecentArrivals>>) {
 
             for t in times {
                 if s.len() > 0 {
-                    s.push_str(", ");
+                    s.push_str("  ");
                 }
                 if q.len() > 0 {
                     q.push_str("  ");
                 }
 
-                let mins = (t.eta_seconds / 60.0).floor() as i64;
+                let mut mins = (t.eta_seconds / 60.0).floor() as i64;
+                if mins < 0 {
+                    mins = 0;
+                }
                 //s.push_str(&format!("{}", mins.floor()));
 
-                let dur = chrono::Duration::minutes(mins);
+                let dur = chrono::Duration::seconds(t.eta_seconds as i64);
                 let when = local.checked_add_signed(dur).unwrap()
                     .format("%H:%M");
 
