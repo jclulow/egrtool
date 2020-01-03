@@ -7,14 +7,21 @@ use std::io::Result;
 use std::io::Error;
 use std::io::ErrorKind;
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use chrono::prelude::*;
 
 use serde::Deserialize;
 
+struct RecentArrivals {
+    list: Vec<Arrival>,
+}
+
 struct Context {
     client: reqwest::Client,
     route_names: HashMap<i64, String>,
+    recent_arrivals: Arc<Mutex<RecentArrivals>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -233,14 +240,12 @@ fn sleep(ms: u64) {
     std::thread::sleep(std::time::Duration::from_millis(ms));
 }
 
-fn display_thread() {
+fn display_thread(ra: Arc<Mutex<RecentArrivals>>) {
     let pole = pd3000::PD3000::open();
 
     pole.reset();
     pole.mode_normal();
     pole.cursor_hide();
-
-    let times: Vec<f64> = vec![ /*38.1,*/ 449.7, 1337.1, 9999.9 ];
 
     let mut on = true;
 
@@ -257,33 +262,31 @@ fn display_thread() {
         let mut s = String::new();
         let mut q = String::new();
 
-        for t in &times {
-            if s.len() > 0 {
-                s.push_str(", ");
+        {
+            let times = &ra.lock().unwrap().list;
+
+            for t in times {
+                if s.len() > 0 {
+                    s.push_str(", ");
+                }
+                if q.len() > 0 {
+                    q.push_str("  ");
+                }
+
+                let mins = (t.eta_seconds / 60.0).floor() as i64;
+                //s.push_str(&format!("{}", mins.floor()));
+
+                let dur = chrono::Duration::minutes(mins);
+                let when = local.checked_add_signed(dur).unwrap()
+                    .format("%H:%M");
+
+                s.push_str(&format!("{}", when));
+                q.push_str(&format!("{:>5}", format!("+{}m", mins)));
+
+                if s.len() > 15 {
+                    break;
+                }
             }
-            if q.len() > 0 {
-                q.push_str("  ");
-            }
-
-            let mins = (t / 60.0).floor() as i64;
-            //s.push_str(&format!("{}", mins.floor()));
-
-            let when = local.checked_add_signed(chrono::Duration::minutes(mins)).unwrap();
-            let f = when.format("%H:%M");
-
-            s.push_str(&format!("{}", f));
-            q.push_str(&format!("{:>5}", format!("+{}m", mins)));
-
-            if s.len() > 15 {
-                break;
-            }
-
-            // let when = local.checked_add_signed(
-            //     chrono::Duration::from_std(
-            //     std::time::Duration::from_secs_f64(*t)).unwrap()).unwrap();
-
-            // let f = when.format("%H:%M:%S");
-            // s.push_str(&format!("{}", f));
         }
 
         pole.move_to(0, 0);
@@ -301,6 +304,13 @@ fn display_thread() {
     }
 }
 
+fn spawn_display_thread(c: &Context) {
+    let ra = Arc::clone(&c.recent_arrivals);
+    std::thread::spawn(move || {
+        display_thread(ra);
+    });
+}
+
 fn main() {
     let cb = reqwest::ClientBuilder::new()
         .redirect(reqwest::RedirectPolicy::none());
@@ -308,9 +318,12 @@ fn main() {
     let mut c = Context {
         client: cb.build().unwrap(),
         route_names: HashMap::new(),
+        recent_arrivals: Arc::new(Mutex::new(RecentArrivals {
+            list: Vec::new()
+        })),
     };
 
-    std::thread::spawn(display_thread);
+    spawn_display_thread(&c);
 
     let r = get_regions(&c).expect("get regions");
     println!("regions: {:#?}", r);
@@ -362,20 +375,46 @@ fn main() {
 
     loop {
         println!("");
+
+        let mut real_arrivals: Vec<Arrival> = Vec::new();
+        let mut fail = false;
+
         for stop_id in &stop_ids {
-            let arrivals = get_arrivals(&c, *stop_id, 86 /* Customer ID XXX */)
-                .expect("get arrivals");
+            let arrivals = match get_arrivals(&c, *stop_id,
+                86 /* Customer ID XXX */)
+            {
+                Err(e) => {
+                    println!("ERROR: get arrivals: {}", e);
+                    fail = true;
+                    break;
+                }
+                Ok(a) => a
+            };
 
             println!("STOP ID {} ARRIVALS:", *stop_id);
 
             for a in arrivals {
                 let sched = if a.just_scheduled { "SCHEDULED" } else { "ACTUAL" };
-                let busname = if let Some(n) = a.bus_name { format!("#{}", n) }
+                let busname = if let Some(n) = &a.bus_name { format!("#{}", n) }
                     else { "-".to_string() };
 
                 println!("{:16} {:8} {:10} {:8}", a.route_name, a.arrive_time,
                     sched, busname);
+
+                if !a.just_scheduled {
+                    real_arrivals.push(a);
+                }
             }
+        }
+
+        if fail {
+            sleep(5_000);
+            continue;
+        }
+
+        {
+            let ra = &mut *c.recent_arrivals.lock().unwrap();
+            ra.list = real_arrivals;
         }
 
         sleep(30_000);
