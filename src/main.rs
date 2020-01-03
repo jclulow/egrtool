@@ -8,6 +8,8 @@ use std::io::Error;
 use std::io::ErrorKind;
 use std::collections::HashMap;
 
+use chrono::prelude::*;
+
 use serde::Deserialize;
 
 struct Context {
@@ -227,9 +229,79 @@ fn get_arrivals(c: &Context, stop_id: i64, customer_id: i64)
     Ok(a)
 }
 
-fn main() {
-    println!("Hello, world!");
+fn sleep(ms: u64) {
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+}
 
+fn display_thread() {
+    let pole = pd3000::PD3000::open();
+
+    pole.reset();
+    pole.mode_normal();
+    pole.cursor_hide();
+
+    let times: Vec<f64> = vec![ /*38.1,*/ 449.7, 1337.1, 9999.9 ];
+
+    let mut on = true;
+
+    loop {
+        /*
+         * Current local time:
+         */
+        let local: DateTime<Local> = Local::now();
+        // let f = local.format("%H:%M:%S");
+
+        /*
+         * Build list of departures:
+         */
+        let mut s = String::new();
+        let mut q = String::new();
+
+        for t in &times {
+            if s.len() > 0 {
+                s.push_str(", ");
+            }
+            if q.len() > 0 {
+                q.push_str("  ");
+            }
+
+            let mins = (t / 60.0).floor() as i64;
+            //s.push_str(&format!("{}", mins.floor()));
+
+            let when = local.checked_add_signed(chrono::Duration::minutes(mins)).unwrap();
+            let f = when.format("%H:%M");
+
+            s.push_str(&format!("{}", f));
+            q.push_str(&format!("{:>5}", format!("+{}m", mins)));
+
+            if s.len() > 15 {
+                break;
+            }
+
+            // let when = local.checked_add_signed(
+            //     chrono::Duration::from_std(
+            //     std::time::Duration::from_secs_f64(*t)).unwrap()).unwrap();
+
+            // let f = when.format("%H:%M:%S");
+            // s.push_str(&format!("{}", f));
+        }
+
+        pole.move_to(0, 0);
+        pole.writes(&format!("{:>20}", s));
+        pole.move_to(0, 1);
+        pole.writes(&format!("{:>20}", q));
+
+        pole.move_to(0, 1);
+        if on {
+            pole.writec('.');
+        }
+        on = !on;
+
+        sleep(1000);
+    }
+}
+
+fn main() {
     let cb = reqwest::ClientBuilder::new()
         .redirect(reqwest::RedirectPolicy::none());
 
@@ -237,6 +309,8 @@ fn main() {
         client: cb.build().unwrap(),
         route_names: HashMap::new(),
     };
+
+    std::thread::spawn(display_thread);
 
     let r = get_regions(&c).expect("get regions");
     println!("regions: {:#?}", r);
@@ -304,6 +378,6 @@ fn main() {
             }
         }
 
-        std::thread::sleep_ms(30_000);
+        sleep(30_000);
     }
 }
